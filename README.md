@@ -46,8 +46,11 @@ An archive that runs out has no known dates, and is analysed.
 ## Building
 
 ```
-mvn verify
+./mvnw verify
 ```
+
+The wrapper pins Maven 3.9.15: Maven 3.10 puts local-repository files into the Maven
+Central bundle, and Central rejects it.
 
 Java 21. It depends on commons-compress, xz and zstd-jni, at the versions Goat Rodeo and
 Allspice already ship.

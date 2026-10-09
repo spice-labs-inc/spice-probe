@@ -24,4 +24,4 @@ jobs:
           cache: "maven"
 
       - name: Build
-        run: mvn --batch-mode verify
+        run: ./mvnw --batch-mode verify
