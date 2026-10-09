@@ -60,12 +60,23 @@ public final class ArchiveDates {
   /**
    * A date after {@code cutoff} found in {@code file}, or empty if none was found or the file's
    * dates could not be read. Reading stops at the first such date.
+   *
+   * @param file the archive to read; anything that is not a regular file has no dates
+   * @param cutoff the instant an entry must be dated after to count
+   * @return the first date after {@code cutoff} found, or empty
    */
   public static Optional<Instant> entryAfter(Path file, Instant cutoff) {
     return entryAfter(file, cutoff, Limits.DEFAULT);
   }
 
-  /** As {@link #entryAfter(Path, Instant)}, within the given limits. */
+  /**
+   * As {@link #entryAfter(Path, Instant)}, within the given limits.
+   *
+   * @param file the archive to read; anything that is not a regular file has no dates
+   * @param cutoff the instant an entry must be dated after to count
+   * @param limits how much a compressed tar may cost before its dates count as unknown
+   * @return the first date after {@code cutoff} found, or empty
+   */
   public static Optional<Instant> entryAfter(Path file, Instant cutoff, Limits limits) {
     if (!Files.isRegularFile(file)) return Optional.empty();
     try {

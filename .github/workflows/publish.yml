@@ -96,6 +96,26 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
 
+      # What was sent to Central, whether or not it was accepted. Central's validation errors
+      # name a path but not the files under it, and the Portal's deployment view needs
+      # credentials most of us don't have; this puts the bundle where anyone can inspect it.
+      - name: Show the Maven Central bundle
+        if: always()
+        run: |
+          find target/central-staging -type f | sort || true
+          bundle=$(find target -name central-bundle.zip | head -1)
+          if [ -n "$bundle" ]; then unzip -l "$bundle"; fi
+
+      - name: Keep the Maven Central bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: central-bundle
+          path: |
+            target/central-staging
+            target/central-publishing
+          if-no-files-found: ignore
+
       # `mvn deploy` succeeds even when the deployment is only staged, so without
       # this the run would go green with nothing on Maven Central -- a version
       # everyone believes shipped but consumers cannot resolve. Fail the run so a
