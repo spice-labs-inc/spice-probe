@@ -1,0 +1,42 @@
+name: Publish spice-probe SNAPSHOT
+
+# Publishes the in-repo -SNAPSHOT spice-probe to GitHub Packages on every push
+# to main, so a component can build against an unreleased change. Releases go
+# through publish.yml (tag v<x.y.z>); this workflow never publishes a release
+# version.
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish_snapshot:
+    name: Publish spice-probe SNAPSHOT to GitHub Packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21 and GitHub Maven auth
+        # setup-java generates a settings.xml with a `github` server whose
+        # username/password come from the GITHUB_ACTOR / GITHUB_TOKEN env vars
+        # (the defaults for server-username / server-password). Those env vars
+        # are set on the deploy step below.
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "21"
+          cache: "maven"
+          server-id: github
+          gpg-private-key: ${{ secrets.MAVEN_CENTRAL_GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
+
+      - name: Publish SNAPSHOT spice-probe to GitHub Packages
+        run: mvn --batch-mode clean deploy -P github
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}

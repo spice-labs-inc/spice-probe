@@ -1,0 +1,128 @@
+name: Publish spice-probe
+
+# spice-probe is a standalone artifact that versions and releases
+# independently, following its own Java API SemVer. It ships on its own GitHub
+# Release, tagged `v<x.y.z>`, to GitHub Packages and Maven Central. SNAPSHOT
+# versions go to GitHub Packages on every push to main by snapshot.yml.
+#
+# Release this before any component that depends on a change in it: the point of
+# a separate artifact is that an artifact cutoff means the same thing to the
+# spice CLI and to Allspice, so neither carries a private copy.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish_spice_probe:
+    name: Publish spice-probe to GitHub Packages and Maven Central
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Full history and tags: the successor check compares this release
+          # tag against every previously released version.
+          fetch-depth: 0
+
+      - name: Validate the release tag
+        id: validate
+        env:
+          # tag_name is "vX.Y.Z" (no refs/tags/ prefix) for the release event.
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          git tag --list > /tmp/all-tags.txt
+          python3 .github/scripts/check-release-tag.py \
+            "${TAG_NAME}" /tmp/all-tags.txt >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 21 and GitHub Maven auth
+        # setup-java imports the GPG key (gpg-private-key/gpg-passphrase) and
+        # sets up Maven. The `github` server auth is written explicitly in the
+        # next step (settings.xml heredoc) using GITHUB_ACTOR/GITHUB_TOKEN env
+        # vars, so server-username/server-password are left at their defaults.
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "21"
+          cache: "maven"
+          server-id: github
+          token: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
+          gpg-private-key: ${{ secrets.MAVEN_CENTRAL_GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
+
+      - name: Write settings.xml for GitHub + Maven Central
+        run: |
+          mkdir -p ~/.m2
+          cat <<EOF > ~/.m2/settings.xml
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+            <servers>
+              <server>
+                <id>github</id>
+                <username>\${env.GITHUB_ACTOR}</username>
+                <password>\${env.GITHUB_TOKEN}</password>
+              </server>
+              <server>
+                <id>central</id>
+                <username>${{ secrets.MAVEN_CENTRAL_USERNAME }}</username>
+                <password>${{ secrets.MAVEN_CENTRAL_PASSWORD }}</password>
+              </server>
+            </servers>
+
+          </settings>
+          EOF
+
+      - name: Set spice-probe version from tag
+        run: mvn --batch-mode versions:set -DnewVersion=${{ steps.validate.outputs.VERSION }} -DgenerateBackupPoms=false
+
+      - name: Publish spice-probe to GitHub Packages
+        run: mvn --batch-mode clean deploy -P github
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
+
+      - name: Publish spice-probe to Maven Central
+        run: |
+          mvn --batch-mode clean deploy -P maven-central \
+            -Dcentral.autoPublish=${{ steps.validate.outputs.auto_publish }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GPG_PASSPHRASE: ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
+
+      # `mvn deploy` succeeds even when the deployment is only staged, so without
+      # this the run would go green with nothing on Maven Central -- a version
+      # everyone believes shipped but consumers cannot resolve. Fail the run so a
+      # parked release is impossible to miss.
+      - name: Flag release awaiting manual confirmation
+        if: steps.validate.outputs.successor_ok != 'true'
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          PREVIOUS: ${{ steps.validate.outputs.previous }}
+        run: |
+          {
+            echo "## :warning: Maven Central release awaiting manual confirmation"
+            echo
+            if [ -n "${PREVIOUS}" ]; then
+              echo "\`${TAG_NAME}\` is not a natural successor to \`${PREVIOUS}\`."
+              echo "Expected one of: ${{ steps.validate.outputs.expected }}."
+            else
+              echo "\`${TAG_NAME}\` is lower than every existing release."
+            fi
+            echo
+            echo "The deployment was uploaded and validated, but **has not been published**."
+            echo "It is waiting in the [Central Portal](https://central.sonatype.com/publishing/deployments):"
+            echo
+            echo "- **Publish** it if this version number is deliberate."
+            echo "- **Drop** it otherwise, then delete the \`${TAG_NAME}\` release and tag and cut the correct version."
+            echo
+            echo "GitHub Packages already has \`${TAG_NAME}\`; delete that package version too if you drop this."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Maven Central release awaiting confirmation::${TAG_NAME} was not published automatically${PREVIOUS:+ (does not follow ${PREVIOUS})}. The deployment is parked in the Central Portal and must be published or dropped by hand."
+          exit 1
